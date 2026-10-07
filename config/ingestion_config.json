@@ -1,0 +1,119 @@
+{
+  "contract_version": 1,
+  "landing_path_template": "Files/{source_system}/{dataset_id}/{run_id}/",
+  "datasets": [
+    {
+      "dataset_id": "saleslt_customer",
+      "enabled": false,
+      "source_system": "adventureworks",
+      "source_type": "SQL",
+      "connection_alias": "sql_adventureworks",
+      "source": {
+        "database": "AdventureWorksLT2022",
+        "schema": "SalesLT",
+        "table": "Customer"
+      },
+      "landing": { "format": "TBD" },
+      "bronze": { "schema": "adventureworkslt", "table": "saleslt_customer" },
+      "keys": { "source_primary_key": null, "business_key": null },
+      "load_policy": { "mode": "FULL", "bronze_write": "REPLACE_SNAPSHOT", "history": "NONE" }
+    },
+    {
+      "dataset_id": "ecommerce_customers",
+      "enabled": true,
+      "source_system": "ecommerce",
+      "source_type": "FILE",
+      "connection_alias": "blob_ecommerce",
+      "source": {
+        "container": "source",
+        "path": "customers.csv",
+        "format": "CSV"
+      },
+      "landing": { "format": "CSV" },
+      "bronze": { "schema": "ecommerce", "table": "customers" },
+      "keys": { "source_primary_key": null, "business_key": null },
+      "load_policy": { "mode": "FULL", "bronze_write": "REPLACE_SNAPSHOT", "history": "NONE" }
+    },
+    {
+      "dataset_id": "ecommerce_orders",
+      "enabled": true,
+      "source_system": "ecommerce",
+      "source_type": "FILE",
+      "connection_alias": "blob_ecommerce",
+      "source": {
+        "container": "source",
+        "path": "orders.csv",
+        "format": "CSV"
+      },
+      "landing": { "format": "CSV" },
+      "bronze": { "schema": "ecommerce", "table": "orders" },
+      "keys": { "source_primary_key": null, "business_key": null },
+      "load_policy": { "mode": "FULL", "bronze_write": "REPLACE_SNAPSHOT", "history": "NONE" }
+    },
+    {
+      "dataset_id": "ecommerce_payments",
+      "enabled": true,
+      "source_system": "ecommerce",
+      "source_type": "FILE",
+      "connection_alias": "blob_ecommerce",
+      "source": {
+        "container": "source",
+        "path": "payments.csv",
+        "format": "CSV"
+      },
+      "landing": { "format": "CSV" },
+      "bronze": { "schema": "ecommerce", "table": "payments" },
+      "keys": { "source_primary_key": null, "business_key": null },
+      "load_policy": { "mode": "FULL", "bronze_write": "REPLACE_SNAPSHOT", "history": "NONE" }
+    },
+    {
+      "dataset_id": "ecommerce_support_tickets",
+      "enabled": true,
+      "source_system": "ecommerce",
+      "source_type": "FILE",
+      "connection_alias": "blob_ecommerce",
+      "source": {
+        "container": "source",
+        "path": "support_tickets.csv",
+        "format": "CSV"
+      },
+      "landing": { "format": "CSV" },
+      "bronze": { "schema": "ecommerce", "table": "support_tickets" },
+      "keys": { "source_primary_key": null, "business_key": null },
+      "load_policy": { "mode": "FULL", "bronze_write": "REPLACE_SNAPSHOT", "history": "NONE" }
+    },
+    {
+      "dataset_id": "ecommerce_web_activities",
+      "enabled": true,
+      "source_system": "ecommerce",
+      "source_type": "FILE",
+      "connection_alias": "blob_ecommerce",
+      "source": {
+        "container": "source",
+        "path": "web_activities.csv",
+        "format": "CSV"
+      },
+      "landing": { "format": "CSV" },
+      "bronze": { "schema": "ecommerce", "table": "web_activities" },
+      "keys": { "source_primary_key": null, "business_key": null },
+      "load_policy": { "mode": "FULL", "bronze_write": "REPLACE_SNAPSHOT", "history": "NONE" }
+    },
+    {
+      "dataset_id": "earthquakes",
+      "enabled": false,
+      "source_system": "usgs",
+      "source_type": "REST",
+      "connection_alias": "rest_usgs",
+      "source": {
+        "relative_path": "fdsnws/event/1/query",
+        "method": "GET",
+        "response_format": "GEOJSON",
+        "query_parameters": null
+      },
+      "landing": { "format": "GEOJSON" },
+      "bronze": { "schema": "usgs", "table": "earthquakes" },
+      "keys": { "source_primary_key": null, "business_key": null },
+      "load_policy": { "mode": "FULL", "bronze_write": "REPLACE_SNAPSHOT", "history": "NONE" }
+    }
+  ]
+}

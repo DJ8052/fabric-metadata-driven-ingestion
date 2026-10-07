@@ -1,0 +1,65 @@
+# Local credentials and environment-specific settings (never commit secrets).
+.env
+.env.*
+*.local
+*.local.*
+*.secret
+*.secrets.*
+secrets/
+credentials/
+.aws/
+.azure/
+*.pem
+*.key
+*.pfx
+*.p12
+/config/local/
+/config/environments/
+
+# Actual extracts and generated data belong outside version control.
+/data/
+/raw/
+/landing/
+/bronze/
+/silver/
+/quarantine/
+/exports/
+*.csv
+*.tsv
+*.parquet
+*.avro
+*.orc
+*.delta
+*.geojson
+*.jsonl
+*.ndjson
+*.bak
+*.mdf
+*.ldf
+_delta_log/
+# JSON remains available for future non-secret configuration.
+# Keep raw JSON and environment-specific exports in ignored locations above.
+
+# Python / notebook caches, local environments, and test output.
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.ipynb_checkpoints/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+test-results/
+
+# Editor, OS, and temporary output.
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+Desktop.ini
+*.log
+*.tmp
+*.swp
+~$*
