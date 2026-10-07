@@ -1,96 +1,96 @@
 # Metadata-driven ingestion in Microsoft Fabric
 
-A data engineering portfolio project for reusable ingestion from SQL Server, Azure Blob Storage, and a REST API into raw Landing files and Bronze Delta tables, with a later Silver validation layer.
+Dataset-specific pipelines duplicate orchestration and make onboarding and troubleshooting harder. This project uses a seven-dataset JSON catalog to reuse orchestration, source selection, Landing paths, and Bronze targets while keeping source-specific extraction concerns separate.
 
-## Engineering problem
+## Current implementation
 
-Dataset-specific pipelines duplicate orchestration and make source onboarding, recovery, and operational changes difficult. Relational tables, files, and API responses also have different extraction requirements. Reuse must account for those differences while providing consistent configuration, storage conventions, and traceability.
+The five ecommerce CSV datasets are enabled and verified in workspace `WS_Metadata_Bronze_Demo`. Pipeline `PL_Metadata_Ingestion` uses native Fabric Copy activities to retain raw files in `LH_Landing` and publish source-aligned Delta snapshots in `LH_Bronze`. `LH_Configuration` is the configuration Lakehouse. SQL and REST remain disabled and unimplemented.
 
-## Project objective
-
-Build a metadata-driven framework that routes datasets to reusable source-specific ingestion patterns, preserves raw extracts for replay, and loads a shared Bronze Lakehouse. Begin with JSON configuration; evaluate configuration tables after the contract and operating needs are understood.
-
-## Source systems
-
-| Source | Initial scope | Format / behavior |
-| --- | --- | --- |
-| Local SQL Server Express | `AdventureWorksLT2022`, initially `SalesLT.Customer` | Landing representation TBD until the SQL Server ingestion pattern is implemented and tested |
-| Azure Blob Storage | Account `ecommerceunifiedproject`, container `source`: `customers.csv`, `orders.csv`, `payments.csv`, `support_tickets.csv`, `web_activities.csv` | CSV initially; Parquet may be added later |
-| USGS Earthquake API | Earthquake observations | JSON/GeoJSON responses; request scope remains to be decided |
-
-Source availability is reported by the project owner. Connections, permissions, schemas, and data contents have not been verified in this step.
-
-## High-level architecture — PLANNED
+The deployed state and run evidence below were supplied by the project owner; this repository update does not independently execute or inspect Fabric.
 
 ```text
-Configuration -> Lookup -> ForEach -> source-type routing
-                                       |
-SQL Server --------\                   v
-Azure Blob ---------> Reusable SQL / file / REST ingestion patterns
-USGS REST API -----/                   |
-                                       v
-                          LH_Landing: raw extracts
-                          source / dataset / run
-                                       |
-                                       v
-                          LH_Bronze: Delta tables
-                          schemas by source system
-                                       |
-                                       v
-                          Silver (future Lakehouse)
-                          validation / standardization /
-                          data quality / quarantine
+set_run_timestamp
+  -> lkp_ingestion_config
+  -> fe_dataset_loop
+  -> if_dataset_enabled
+  -> cpy_file_to_landing
+  -> cpy_landing_to_bronze
 ```
 
-This is a design, not an executable pipeline. Connector-specific extraction feeds a planned reusable Bronze loader. See [architecture and tradeoffs](docs/architecture.md).
+`set_run_timestamp` sets the pipeline String variable `run_timestamp = @utcNow()`. The separate execution identity `@pipeline().RunId` supplies the Landing run folder; it is not a timestamp.
 
-## CURRENT STATE
+Copy 1 performs a Binary copy from Azure Blob account `ecommerceunifiedproject`, using container `@item().source.container` and filename `@item().source.path`. Its destination is `LH_Landing`, root `Files`, directory `@concat(item().source_system,'/',item().dataset_id,'/',pipeline().RunId)`, with the same filename.
 
-- The project owner has created workspace `WS_Metadata_Bronze_Demo` and schema-enabled Lakehouses `LH_Configuration`, `LH_Landing`, and `LH_Bronze`. These resources were not inspected from this repository.
-- This repository contains project documentation, ignore rules, [Configuration Contract v1](docs/configuration-contract.md), a [seven-dataset JSON catalog](config/ingestion_config.json), and a lightweight local validator. All seven datasets are initially disabled pending source/connection validation.
-- No ingestion, pipeline, notebook, Bronze table, audit process, replay process, or Silver layer is implemented here. No successful ingestion run is claimed; the configuration has not been uploaded to Fabric.
+Copy 2 reads that exact Landing directory and filename as DelimitedText / CSV with first-row headers, comma delimiter, and UTF-8 encoding. It writes to `LH_Bronze`, root `Tables`, schema `@item().bronze.schema`, table `@item().bronze.table`, with table action **Overwrite**. This implements `FULL / REPLACE_SNAPSHOT / NONE` for the five FILE datasets.
 
-## PLANNED phases
+Landing retains the raw input, for example `Files/ecommerce/ecommerce_customers/<pipeline-run-id>/customers.csv`. Bronze exposes the current source-aligned table snapshot. RunId-scoped Landing is implemented; formal replay orchestration is future work.
 
-| Phase | Deliverable | Status |
-| --- | --- | --- |
-| 0 | Repository structure and architecture documentation | Present in this working tree; awaiting review |
-| 1 | JSON configuration contract, source inventory, key discovery, and connection validation | Local v1 contract and initial catalog present; key discovery and connection validation pending |
-| 2 | SQL, file, and REST extraction patterns; metadata-driven routing; raw Landing conventions | Planned |
-| 3 | Generic Bronze load notebook with format-aware parsing and explicit dataset load policies | Planned |
-| 4 | Ingestion audit/monitoring, failure handling, and replay with tested duplicate prevention | Planned |
-| 5 | Silver validation, standardization, data quality, and quarantine; selective history where justified | Planned |
-| Later evaluation | Configuration tables when editing, querying, or governance needs justify them | Planned |
+## Seven-dataset inventory
 
-Source primary keys and business keys will be recorded separately. SCD2/change-history requires a dataset-specific use case; it is not the default Bronze behavior.
+| Dataset | Type | Enabled | Source | Bronze target | Verified rows |
+| --- | --- | --- | --- | --- | --- |
+| `ecommerce_customers` | FILE | `true` | `source/customers.csv` | `ecommerce.customers` | 15 |
+| `ecommerce_orders` | FILE | `true` | `source/orders.csv` | `ecommerce.orders` | 15 |
+| `ecommerce_payments` | FILE | `true` | `source/payments.csv` | `ecommerce.payments` | 15 |
+| `ecommerce_support_tickets` | FILE | `true` | `source/support_tickets.csv` | `ecommerce.support_tickets` | 15 |
+| `ecommerce_web_activities` | FILE | `true` | `source/web_activities.csv` | `ecommerce.web_activities` | 15 |
+| `saleslt_customer` | SQL | `false` | `AdventureWorksLT2022.SalesLT.Customer` | `adventureworkslt.saleslt_customer` (planned) | Not loaded |
+| `earthquakes` | REST | `false` | USGS earthquakes | `usgs.earthquakes` (planned) | Not loaded |
+
+The `ecommerce` schema and its five tables exist: **75 rows total**. SQL uses logical alias `sql_adventureworks`; its Landing representation remains `TBD`, with no gateway or connection status assumed. REST uses `rest_usgs`; exact request/query scope remains undecided. FILE uses `blob_ecommerce`.
+
+## Verification evidence
+
+The owner verified a successful run on **2026-10-07**, from **8:18:50 AM to 8:19:57 AM**, lasting **1 minute 7 seconds**, with status **Succeeded**. Pipeline Run ID: `11f3408-764a-449f-8de9-8f1c2a032d64` (recorded as supplied). Observed activity durations were 12 seconds for `lkp_ingestion_config` and 44 seconds for `fe_dataset_loop`. All five enabled FILE datasets completed. These observations and row counts are verification evidence, not a performance guarantee.
+
+## Previous notebook and current traceability
+
+[NB_Load_Bronze.py](notebooks/NB_Load_Bronze.py) previously processed CSV Landing files into Bronze successfully. It is **inactive in the current FILE path**. Native Copy replaced notebook-per-dataset execution because Spark startup/runtime overhead was disproportionate for these small CSV datasets. The notebook remains an implementation artifact and a possible option when Spark transformations justify it.
+
+The previous notebook added `_ingested_at_utc`, `_source_system`, `_dataset_id`, and `_pipeline_run_id`. The current native Copy Bronze tables do not contain these columns.
+
+Current troubleshooting follows **Fabric Monitor -> pipeline RunId -> LH_Landing RunId directory -> configuration -> LH_Bronze result**. The RunId locates the corresponding retained raw input. There is no durable direct pipeline RunId-to-Bronze Delta version relationship. Retained input provides a foundation for reprocessing, not automated safe replay.
+
+## Remaining scope
+
+SQL ingestion is the next source pattern. REST ingestion, a dataset-level ingestion manifest/audit, retry policies, formal replay controls, processing-attempt identity, completion markers, direct Bronze version linkage, and replay concurrency protection remain future work. No additional Lakehouse or Warehouse is being created for audit, and Spark is not being reintroduced solely for lineage.
+
+Advanced schema contracts, schema drift handling, quarantine/dead-letter handling, incremental loading, watermarks, CDC, deduplication where justified, Silver validation/standardization/quarantine, and configuration tables if later justified are also future work. Gold, star schemas, semantic models, and Power BI are out of scope.
 
 ## Repository layout
 
 ```text
 fabric-metadata-driven-ingestion/
-├── .gitignore
-├── README.md
-├── config/
-│   ├── .gitkeep
-│   └── ingestion_config.json
-├── docs/
-│   ├── architecture.md
-│   └── configuration-contract.md
-├── fabric/
-│   └── .gitkeep
-├── notebooks/
-│   └── .gitkeep
-└── tests/
-    ├── .gitkeep
-    └── validate-config.ps1
+|-- .gitignore
+|-- README.md
+|-- config/
+|   |-- .gitkeep
+|   `-- ingestion_config.json
+|-- docs/
+|   |-- architecture.md
+|   `-- configuration-contract.md
+|-- fabric/
+|   `-- .gitkeep
+|-- notebooks/
+|   |-- .gitkeep
+|   `-- NB_Load_Bronze.py
+`-- tests/
+    |-- .gitkeep
+    `-- validate-config.ps1
 ```
 
-`config/` contains non-secret configuration; `tests/` contains local contract validation. `notebooks/` is reserved for future authored notebooks and `fabric/` for genuine, reviewed Fabric artifacts when available. `.gitkeep` files are scaffolding placeholders. Run `powershell -NoProfile -ExecutionPolicy Bypass -File tests/validate-config.ps1` to validate the catalog locally (process-scoped policy override only).
+`fabric/` is a placeholder for reviewed Fabric artifacts; the deployed pipeline is documented here rather than exported in that directory. See [architecture and decisions](docs/architecture.md) and [Configuration Contract v1](docs/configuration-contract.md).
 
-## Security and scope
+Validate the catalog locally:
 
-Never commit credentials, passwords, connection strings, access keys, SAS tokens, API secrets, machine-specific secrets, environment-specific Fabric IDs, or actual raw/landing data. Keep credentials in approved external connection/secret management and resolve environment-specific values outside versioned configuration. Workspace and Lakehouse display names above provide context, not deployable identifiers.
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File tests/validate-config.ps1
+```
 
-Ignore rules cover common local secrets, environment settings, data locations, and generated files; they do not replace reviewing file contents before a future commit. JSON is intentionally not ignored globally because non-secret configuration will later be versioned.
+The validator checks static configuration, not live Fabric execution.
 
-Gold, star schemas, semantic models, and Power BI are outside this project's scope. This phase adds only local configuration, documentation, and validation; no Fabric runtime implementation, deployment, commit, or push.
+## Security boundaries
+
+Keep credentials, passwords, connection strings, access keys, SAS tokens, API secrets, Fabric resource IDs, connection IDs, machine-specific settings, and actual raw data out of Git. Resolve credentials and environment bindings through approved external connections/secret management. Display names and logical aliases are documentation/configuration context, not deployable connection identifiers.
+
+Keep runtime RunIds, timestamps, counts, errors, audit information, and watermark values out of `ingestion_config.json`. The run evidence above belongs in documentation. Ignore rules supplement content review; they do not replace it.

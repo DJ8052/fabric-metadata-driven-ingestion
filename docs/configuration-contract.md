@@ -2,9 +2,9 @@
 
 ## Current state and scope
 
-[ingestion_config.json](../config/ingestion_config.json) is a local dataset catalog and design contract. It contains exactly seven initial datasets: AdventureWorks `SalesLT.Customer`, the five ecommerce Blob CSV files, and USGS earthquakes. No Fabric runtime consumes it yet. No connection, pipeline, notebook, table, or ingestion behavior is implemented by this file.
+[ingestion_config.json](../config/ingestion_config.json) is the dataset catalog and contract. It contains exactly seven initial datasets: AdventureWorks `SalesLT.Customer`, the five ecommerce Blob CSV files, and USGS earthquakes. The five ecommerce FILE datasets are enabled because their ingestion has been implemented, tested, and verified successfully. SQL Server and REST ingestion are not implemented and remain disabled.
 
-All datasets start disabled pending connection and parsing validation. Disabled entries remain subject to structural validation. This is not an assertion that the sources are unavailable. Configuration validity does not mean execution readiness.
+Disabled entries remain subject to structural validation. A disabled flag records that a source type is not ready for execution; it is not an assertion that the source is unavailable. Configuration validity does not by itself prove runtime readiness.
 
 ## Field definitions
 
@@ -18,7 +18,7 @@ Paths below are relative to a dataset in `datasets[]` unless identified as root 
 | `landing_path_template` (root) | One shared deterministic path convention, relative to the Landing Lakehouse | Yes; exact v1 template | All | `Files/{source_system}/{dataset_id}/{run_id}/` | Static template; tokens resolved at runtime |
 | `datasets` (root) | Nonempty array of dataset objects | Yes | All | Seven objects in the supplied file | Static |
 | `dataset_id` | Stable, globally unique catalog identity and Landing dataset segment | Yes | All | `saleslt_customer` | Static |
-| `enabled` | Boolean orchestration opt-in; never a string | Yes | All | `false` | Static |
+| `enabled` | Boolean orchestration opt-in; never a string | Yes | All | `true` for the implemented FILE datasets; `false` for SQL and REST | Static |
 | `source_system` | Stable source-system grouping and Landing source segment | Yes | All | `adventureworks` | Static |
 | `source_type` | Controlled routing discriminator: `SQL`, `FILE`, `REST` | Yes | All | `SQL` | Static |
 | `connection_alias` | Logical reference resolved externally to a Fabric connection | Yes | All | `sql_adventureworks` | Static |
@@ -48,13 +48,13 @@ No keys are guessed from column names. In particular, a SQL primary key must be 
 
 The initial aliases are `sql_adventureworks`, `blob_ecommerce`, and `rest_usgs`. Account/server endpoints, authentication, credentials, connection IDs, and environment-specific Lakehouse bindings remain outside this file. Aliases are not executable Fabric connection IDs. The FILE pattern currently means Azure Blob Storage, not every possible file connector.
 
-The owner identifies storage account `ecommerceunifiedproject`, container `source`, and files `customers.csv`, `orders.csv`, `payments.csv`, `support_tickets.csv`, and `web_activities.csv`. The external `blob_ecommerce` connection binding will select that account; JSON retains only the existing container/path fields, so no contract extension is needed. These filenames do not establish columns, keys, relationships, incremental columns, or data-quality rules. All keys remain unknown until source inspection.
+The owner identifies storage account `ecommerceunifiedproject`, container `source`, and files `customers.csv`, `orders.csv`, `payments.csv`, `support_tickets.csv`, and `web_activities.csv`. Their FILE ingestion is implemented, tested, and verified successfully. The external `blob_ecommerce` connection binding selects that account; JSON retains only the existing container/path fields, so no contract extension is needed. These filenames do not establish columns, keys, relationships, incremental columns, or data-quality rules. All keys remain unknown until source inspection.
 
 Inventory labels SQL_SERVER and AZURE_BLOB map to the existing v1 routing values `SQL` and `FILE`; these enums are unchanged. USGS retains `GEOJSON`, its existing JSON response representation. The ecommerce source-system and Bronze schema names are logical target organization, not claims about schemas inside the source files.
 
 The REST path is relative to the public USGS service root `https://earthquake.usgs.gov/`. Its GET query endpoint and GeoJSON response option are documented in the [USGS API documentation](https://earthquake.usgs.gov/fdsnws/event/1/). Exact query parameters are deliberately not selected here. Before execution, define a bounded, complete retrieval and explicitly request GeoJSON; `response_format` alone does not send a query parameter. Do not fall back to API defaults when `query_parameters` is null. REST must remain disabled in v1; adding a reviewed query-parameter contract is a prerequisite to enabling it.
 
-CSV delimiter, header, encoding, quoting, and type rules are also not inferred from filenames. Add verified parsing options to the FILE source contract when implementing the loader. `PARQUET` is an allowed file-format value for later onboarding, not a claim that a Parquet file source is present or supported by an implemented loader.
+The five configured CSV files are covered by the implemented and verified FILE path. The active `cpy_landing_to_bronze` activity uses DelimitedText / CSV with first row header, comma delimiter, and UTF-8. These activity settings are not additional catalog keys; this v1 catalog does not encode delimiter, header, encoding, quoting, or type rules. `PARQUET` is an allowed file-format value for later onboarding, not a claim that a Parquet file source is present or supported by an implemented loader.
 
 ### C. Landing and target metadata
 
@@ -66,11 +66,11 @@ CSV delimiter, header, encoding, quoting, and type rules are also not inferred f
 | `bronze.schema` | Logical source-system schema | Yes | All | `adventureworkslt` | Static |
 | `bronze.table` | Source-aligned Delta table name | Yes | All | `saleslt_customer` | Static |
 
-Lakehouse bindings are fixed by project role: Landing uses `LH_Landing`, Bronze uses `LH_Bronze`, and future runtime configuration is intended for `LH_Configuration`. Environment binding is external; repeating Lakehouse names or IDs on every dataset would add no routing information. Bronze is always Delta in this contract, so no redundant target-format field is needed. Schema/table pairs must be unique within the shared Bronze Lakehouse.
+Lakehouse bindings are fixed by project role: Landing uses `LH_Landing`, Bronze uses `LH_Bronze`, and configuration uses `LH_Configuration`. Environment binding is external; repeating Lakehouse names or IDs on every dataset would add no routing information. Bronze is always Delta in this contract, so no redundant target-format field is needed. Schema/table pairs must be unique within the shared Bronze Lakehouse.
 
-SQL Landing representation is explicitly TBD until the SQL Server ingestion pattern is implemented and tested. `TBD` is an unresolved configuration marker, not a readable file format; SQL remains disabled while it is unresolved. FILE Landing retains the original file representation and REST Landing retains the raw response body. These are preservation requirements, not transformations already implemented. Parquet may be demonstrated later as an Azure Blob source file format.
+SQL Landing representation is explicitly TBD until the SQL Server ingestion pattern is implemented and tested. `TBD` is an unresolved configuration marker, not a readable file format; SQL remains disabled while it is unresolved. FILE Landing retains the original file representation and REST Landing retains the raw response body. FILE raw preservation is implemented by Binary Copy; REST preservation remains a planned requirement. Parquet may be demonstrated later as an Azure Blob source file format.
 
-Resolve the template as `Files/<source_system>/<dataset_id>/<run_id>/`. For Customer, the static prefix is `Files/adventureworks/saleslt_customer/`; the runtime appends its actual run ID. No run ID or timestamp is stored in the catalog. Every fresh extraction gets a unique runtime run ID. Completed extracts are immutable: retries must not overwrite completed content. Partial-attempt handling and completion markers are future runtime responsibilities. Replay reads an existing completed extraction run and uses a separate processing attempt identity; it does not rewrite Landing.
+Resolve the template as `Files/<source_system>/<dataset_id>/<run_id>/`, with `{run_id}` supplied by `@pipeline().RunId`. RunId-scoped Landing is implemented for FILE datasets. Both Copy activities use directory `@concat(item().source_system,'/',item().dataset_id,'/',pipeline().RunId)` under `LH_Landing` root `Files` and filename `@item().source.path`. Example: `Files/ecommerce/ecommerce_customers/<pipeline-run-id>/customers.csv`. No run ID or timestamp is stored in the catalog. Completion markers, processing-attempt identity, and formal replay controls remain future work; retained run directories alone do not implement safe replay.
 
 ### D. Load-policy metadata
 
@@ -83,30 +83,48 @@ Resolve the template as `Files/<source_system>/<dataset_id>/<run_id>/`. For Cust
 
 `FULL` means all records in the selected source object or agreed API request scope, not necessarily the entire upstream system or earthquake catalog. `REPLACE_SNAPSHOT` means publishing the complete successful extract as the current contents of that dataset's Bronze table, including an intentionally validated empty snapshot. Never publish a partial/failed extraction or append a full rerun blindly. API scope must be agreed before replacement is enabled because each publication represents only that scope.
 
-Replaying the same immutable extract should yield the same business rows without accumulating duplicates. The future loader must validate completeness, control concurrent writers and out-of-order runs, define empty-load handling, and test failure recovery before claiming idempotency. Processing timestamps may differ between attempts; logical row-set idempotency does not require identical audit metadata. Replaying an older run into the current target intentionally restores an older snapshot and must be an explicit operational choice.
+For the current FILE path, `cpy_landing_to_bronze` publishes to `LH_Bronze`, root `Tables`, schema `@item().bronze.schema`, and table `@item().bronze.table`, using table action **Overwrite**. This implements FULL / REPLACE_SNAPSHOT for the five enabled CSV datasets. Replay, completeness controls, empty-load policy, concurrent-writer protection, out-of-order publication controls, and failure recovery require future design and testing before safe replay or idempotency guarantees can be claimed. Overwrite does not remove duplicates already present in a source.
 
 `NONE` disables business change-history policy; it does not disable raw extract retention. No SCD2 or CDC is implemented. Incremental loading is not accepted by v1: a later version can add `INCREMENTAL` and a dataset-specific nested policy inside `load_policy` without changing the common/source/target layout. Watermark column definitions would be static policy; actual last-successful watermark values belong to runtime state. Add only demonstrated policies with validation and loader support. Consumers must reject unsupported versions and enum values rather than silently treating them as FULL.
 
 ## Configuration versus runtime metadata
 
-The catalog describes intent. Execution facts belong in future run/audit state, not in `ingestion_config.json`.
+The catalog describes static intent. Runtime execution facts stay outside `ingestion_config.json`: no credentials, Fabric IDs, connection IDs, runtime RunIds, timestamps, row counts, audit information, or watermark values belong there. The owner-supplied deployed state is documented here; local validation does not independently inspect Fabric.
 
-| Runtime field / concept | Purpose | Required when implemented | Applies to | Example | Supplied by |
-| --- | --- | --- | --- | --- | --- |
-| `run_id` | Unique identity of an extraction and its immutable Landing directory | Every extraction | All | Generated UTC timestamp plus uniqueness component | Runtime |
-| Processing attempt ID | Distinguishes retries/replays of the same extraction | Every processing attempt | All | Generated attempt identifier | Runtime |
-| Ingestion timestamp | Records when processing occurred | Every load | All | Actual UTC execution time | Runtime |
-| Status | Records progress/outcome | Every attempt | All | Success or failure, under a future controlled vocabulary | Runtime |
-| Rows read / written | Records measured counts, with units defined for nested payloads | Where measurable; unknown must not mean zero | All | Measured integer | Runtime |
-| Errors | Sanitized failure details | Failed attempts where available | All | Sanitized connector error | Runtime |
-| Watermark values | Tracks last successful incremental boundary | Only future incremental datasets | Where justified | Observed source boundary | Runtime; deferred |
-| Resolved request scope / files / completion evidence | Identifies what was actually extracted and whether complete | Before safe publication/replay | All | Actual response-part list or source object version | Runtime |
-| Configuration version/content reference | Identifies the exact dataset definition used by a run | Before reproducible replay | All | Reference to retained configuration content | Runtime |
+### IMPLEMENTED RUNTIME
 
-These runtime names and examples are conceptual, not an implemented audit schema. `contract_version` versions the structure; it does not identify the exact configuration contents used by a historical run.
+| Value / behavior | Current implementation |
+| --- | --- |
+| `pipeline_run_id` | `pipeline().RunId`, referenced in pipeline expressions as `@pipeline().RunId`; execution identity, not a generated timestamp |
+| `run_timestamp` | Pipeline String variable set by `set_run_timestamp` using `@utcNow()`; separate from RunId |
+| RunId Landing directory | `Files/{source_system}/{dataset_id}/{run_id}/`, resolved using the pipeline RunId; original filename retained |
+| Execution information | Fabric Monitor pipeline/activity execution information |
+| Bronze publication | Native `cpy_landing_to_bronze` Copy with Overwrite, implementing the configured snapshot policy for enabled FILE datasets |
+
+Current path: `set_run_timestamp -> lkp_ingestion_config -> fe_dataset_loop -> if_dataset_enabled -> cpy_file_to_landing -> cpy_landing_to_bronze`. Binary Copy retains Blob input; native CSV Copy publishes Bronze. The `ecommerce` schema and five configured tables exist. See the [README verification evidence](../README.md#verification-evidence) for the successful run and row counts.
+
+`NB_Load_Bronze` is inactive in this path. Its previous implementation added `_ingested_at_utc`, `_source_system`, `_dataset_id`, and `_pipeline_run_id`; current native Copy Bronze tables do not contain these columns.
+
+Traceability follows Fabric Monitor -> pipeline RunId -> LH_Landing RunId directory -> configuration -> LH_Bronze result. It locates the raw input associated with a run, but there is no durable direct pipeline RunId-to-Bronze Delta version relationship.
+
+### PLANNED DURABLE AUDIT STATE
+
+| Concept | Future purpose |
+| --- | --- |
+| Dataset-level status | Persist dataset outcomes under an agreed status vocabulary |
+| Persisted row counts | Record measured counts with defined units; unknown is not zero |
+| Sanitized errors | Retain failure context without secrets |
+| Configuration reference | Identify the exact configuration content used by a run |
+| Processing/replay attempt | Distinguish retries/reprocessing from the original extraction |
+| Future watermark values | Persist last-successful incremental boundaries only after incremental loading is implemented |
+| Possible Bronze version linkage | Link publication to a table version if designed and verified |
+
+A dataset-level ingestion manifest is intentionally deferred to monitoring/auditing. Possible fields: `pipeline_run_id`, `dataset_id`, `source_system`, `landing_path`, `bronze_schema`, `bronze_table`, `run_timestamp`, `row_count`, and `status`. These are candidate audit fields, not new catalog keys or an implemented schema. No additional Lakehouse or Warehouse is created, and Spark is not reintroduced merely for lineage.
+
+Retained raw files are a foundation for troubleshooting/reprocessing. Explicit replay workflows, processing-attempt identity, automated safe replay, completion markers, direct Bronze version linkage, and replay concurrency protection remain future work. `contract_version` versions the structure; it does not identify the exact catalog content used by a historical run.
 
 ## Local validation
 
 Run `powershell -NoProfile -ExecutionPolicy Bypass -File tests/validate-config.ps1` from the repository root. The execution-policy override applies only to that process; it does not change the machine's persistent policy. The script uses built-in JSON parsing and checks required/allowed fields, types, controlled values, dataset and target uniqueness, source-specific shapes, format consistency, key definitions, and REST's disabled/unconfigured state. It makes no network or Fabric calls and writes no data.
 
-Validation does not inspect source schemas, authenticate connections, prove parsing behavior, or implement ingestion. Content review remains necessary to keep secrets out of configuration. Before enabling execution, finish source discovery, connection binding, CSV/GeoJSON parsing, completeness criteria, and safe publication behavior.
+Validation checks catalog structure only; it does not inspect source schemas, authenticate connections, or prove runtime execution. Content review remains necessary to keep secrets out of configuration. The ecommerce FILE datasets are enabled based on their implemented, tested, and verified ingestion. Keep SQL and REST disabled until their source-specific ingestion, access, scope, parsing, completeness, and publication behavior are implemented and verified.
