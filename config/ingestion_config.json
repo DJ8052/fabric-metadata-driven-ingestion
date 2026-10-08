@@ -1,23 +1,8 @@
+
 {
   "contract_version": 1,
   "landing_path_template": "Files/{source_system}/{dataset_id}/{run_id}/",
   "datasets": [
-    {
-      "dataset_id": "saleslt_customer",
-      "enabled": false,
-      "source_system": "adventureworks",
-      "source_type": "SQL",
-      "connection_alias": "sql_adventureworks",
-      "source": {
-        "database": "AdventureWorksLT2022",
-        "schema": "SalesLT",
-        "table": "Customer"
-      },
-      "landing": { "format": "TBD" },
-      "bronze": { "schema": "adventureworkslt", "table": "saleslt_customer" },
-      "keys": { "source_primary_key": null, "business_key": null },
-      "load_policy": { "mode": "FULL", "bronze_write": "REPLACE_SNAPSHOT", "history": "NONE" }
-    },
     {
       "dataset_id": "ecommerce_customers",
       "enabled": true,
@@ -29,10 +14,22 @@
         "path": "customers.csv",
         "format": "CSV"
       },
-      "landing": { "format": "CSV" },
-      "bronze": { "schema": "ecommerce", "table": "customers" },
-      "keys": { "source_primary_key": null, "business_key": null },
-      "load_policy": { "mode": "FULL", "bronze_write": "REPLACE_SNAPSHOT", "history": "NONE" }
+      "landing": {
+        "format": "CSV"
+      },
+      "bronze": {
+        "schema": "ecommerce",
+        "table": "customers"
+      },
+      "keys": {
+        "source_primary_key": null,
+        "business_key": null
+      },
+      "load_policy": {
+        "mode": "FULL",
+        "bronze_write": "REPLACE_SNAPSHOT",
+        "history": "NONE"
+      }
     },
     {
       "dataset_id": "ecommerce_orders",
@@ -45,10 +42,22 @@
         "path": "orders.csv",
         "format": "CSV"
       },
-      "landing": { "format": "CSV" },
-      "bronze": { "schema": "ecommerce", "table": "orders" },
-      "keys": { "source_primary_key": null, "business_key": null },
-      "load_policy": { "mode": "FULL", "bronze_write": "REPLACE_SNAPSHOT", "history": "NONE" }
+      "landing": {
+        "format": "CSV"
+      },
+      "bronze": {
+        "schema": "ecommerce",
+        "table": "orders"
+      },
+      "keys": {
+        "source_primary_key": null,
+        "business_key": null
+      },
+      "load_policy": {
+        "mode": "FULL",
+        "bronze_write": "REPLACE_SNAPSHOT",
+        "history": "NONE"
+      }
     },
     {
       "dataset_id": "ecommerce_payments",
@@ -61,10 +70,22 @@
         "path": "payments.csv",
         "format": "CSV"
       },
-      "landing": { "format": "CSV" },
-      "bronze": { "schema": "ecommerce", "table": "payments" },
-      "keys": { "source_primary_key": null, "business_key": null },
-      "load_policy": { "mode": "FULL", "bronze_write": "REPLACE_SNAPSHOT", "history": "NONE" }
+      "landing": {
+        "format": "CSV"
+      },
+      "bronze": {
+        "schema": "ecommerce",
+        "table": "payments"
+      },
+      "keys": {
+        "source_primary_key": null,
+        "business_key": null
+      },
+      "load_policy": {
+        "mode": "FULL",
+        "bronze_write": "REPLACE_SNAPSHOT",
+        "history": "NONE"
+      }
     },
     {
       "dataset_id": "ecommerce_support_tickets",
@@ -77,10 +98,22 @@
         "path": "support_tickets.csv",
         "format": "CSV"
       },
-      "landing": { "format": "CSV" },
-      "bronze": { "schema": "ecommerce", "table": "support_tickets" },
-      "keys": { "source_primary_key": null, "business_key": null },
-      "load_policy": { "mode": "FULL", "bronze_write": "REPLACE_SNAPSHOT", "history": "NONE" }
+      "landing": {
+        "format": "CSV"
+      },
+      "bronze": {
+        "schema": "ecommerce",
+        "table": "support_tickets"
+      },
+      "keys": {
+        "source_primary_key": null,
+        "business_key": null
+      },
+      "load_policy": {
+        "mode": "FULL",
+        "bronze_write": "REPLACE_SNAPSHOT",
+        "history": "NONE"
+      }
     },
     {
       "dataset_id": "ecommerce_web_activities",
@@ -93,10 +126,134 @@
         "path": "web_activities.csv",
         "format": "CSV"
       },
-      "landing": { "format": "CSV" },
-      "bronze": { "schema": "ecommerce", "table": "web_activities" },
-      "keys": { "source_primary_key": null, "business_key": null },
-      "load_policy": { "mode": "FULL", "bronze_write": "REPLACE_SNAPSHOT", "history": "NONE" }
+      "landing": {
+        "format": "CSV"
+      },
+      "bronze": {
+        "schema": "ecommerce",
+        "table": "web_activities"
+      },
+      "keys": {
+        "source_primary_key": null,
+        "business_key": null
+      },
+      "load_policy": {
+        "mode": "FULL",
+        "bronze_write": "REPLACE_SNAPSHOT",
+        "history": "NONE"
+      }
+    },
+    {
+      "dataset_id": "azuresql_cars",
+      "enabled": true,
+      "source_system": "adflookupdemo",
+      "source_type": "SQL",
+      "connection_alias": "azuresql_adflookupdemo",
+      "source": {
+        "database": "adflookupdemo",
+        "schema": "dbo",
+        "table": "Cars"
+      },
+      "landing": {
+        "format": "PARQUET"
+      },
+      "bronze": {
+        "schema": "adflookupdemo",
+        "table": "cars"
+      },
+      "keys": {
+        "source_primary_key": null,
+        "business_key": null
+      },
+      "load_policy": {
+        "mode": "FULL",
+        "bronze_write": "REPLACE_SNAPSHOT",
+        "history": "NONE"
+      }
+    },
+    {
+      "dataset_id": "azuresql_countries",
+      "enabled": true,
+      "source_system": "adflookupdemo",
+      "source_type": "SQL",
+      "connection_alias": "azuresql_adflookupdemo",
+      "source": {
+        "database": "adflookupdemo",
+        "schema": "dbo",
+        "table": "Countries"
+      },
+      "landing": {
+        "format": "PARQUET"
+      },
+      "bronze": {
+        "schema": "adflookupdemo",
+        "table": "countries"
+      },
+      "keys": {
+        "source_primary_key": null,
+        "business_key": null
+      },
+      "load_policy": {
+        "mode": "FULL",
+        "bronze_write": "REPLACE_SNAPSHOT",
+        "history": "NONE"
+      }
+    },
+    {
+      "dataset_id": "azuresql_movies",
+      "enabled": true,
+      "source_system": "adflookupdemo",
+      "source_type": "SQL",
+      "connection_alias": "azuresql_adflookupdemo",
+      "source": {
+        "database": "adflookupdemo",
+        "schema": "dbo",
+        "table": "Movies"
+      },
+      "landing": {
+        "format": "PARQUET"
+      },
+      "bronze": {
+        "schema": "adflookupdemo",
+        "table": "movies"
+      },
+      "keys": {
+        "source_primary_key": null,
+        "business_key": null
+      },
+      "load_policy": {
+        "mode": "FULL",
+        "bronze_write": "REPLACE_SNAPSHOT",
+        "history": "NONE"
+      }
+    },
+    {
+      "dataset_id": "azuresql_service_requests",
+      "enabled": true,
+      "source_system": "adflookupdemo",
+      "source_type": "SQL",
+      "connection_alias": "azuresql_adflookupdemo",
+      "source": {
+        "database": "adflookupdemo",
+        "schema": "dbo",
+        "table": "ServiceRequests"
+      },
+      "landing": {
+        "format": "PARQUET"
+      },
+      "bronze": {
+        "schema": "adflookupdemo",
+        "table": "service_requests"
+      },
+      "keys": {
+        "source_primary_key": null,
+        "business_key": null
+      },
+      "load_policy": {
+        "mode": "FULL",
+        "bronze_write": "REPLACE_SNAPSHOT",
+        "history": "NONE"
+      }
     },
     {
       "dataset_id": "earthquakes",
@@ -110,10 +267,22 @@
         "response_format": "GEOJSON",
         "query_parameters": null
       },
-      "landing": { "format": "GEOJSON" },
-      "bronze": { "schema": "usgs", "table": "earthquakes" },
-      "keys": { "source_primary_key": null, "business_key": null },
-      "load_policy": { "mode": "FULL", "bronze_write": "REPLACE_SNAPSHOT", "history": "NONE" }
+      "landing": {
+        "format": "GEOJSON"
+      },
+      "bronze": {
+        "schema": "usgs",
+        "table": "earthquakes"
+      },
+      "keys": {
+        "source_primary_key": null,
+        "business_key": null
+      },
+      "load_policy": {
+        "mode": "FULL",
+        "bronze_write": "REPLACE_SNAPSHOT",
+        "history": "NONE"
+      }
     }
   ]
 }
