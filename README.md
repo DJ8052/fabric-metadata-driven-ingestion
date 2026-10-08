@@ -1,203 +1,942 @@
-# Microsoft Fabric Metadata-Driven Bronze Ingestion Framework
 
-This project replaces repeated dataset-specific ingestion pipelines with shared orchestration and a JSON dataset catalog. Each record describes a source and Bronze destination; source-specific Copy branches handle movement. This reduces repeated pipeline maintenance while keeping dataset identity, source selection and target naming reviewable.
+# Microsoft Fabric | Metadata-Driven Bronze Ingestion Framework
 
-The demonstrated scope is Azure Blob Storage CSV files and Azure SQL Database tables, staged in Landing and published as full Delta snapshots in Bronze. Landing preserves run-specific input for diagnosis; Bronze provides queryable current state. This is a working ingestion demonstration, not a production-hardened CDC or incremental framework.
+**A reusable, configuration-driven data ingestion framework built with Microsoft Fabric Data Factory, Azure SQL Database, Azure Blob Storage, and Delta Lake.**
 
-**Evidence as of October 8, 2026:** the owner reports nine queryable Bronze tables, 632 rows, and a successful full rerun with unchanged counts. This documentation review did not connect to Fabric. Exact deployed expressions and activity suffixes require Fabric UI verification because `fabric/` has no pipeline export.
+![Microsoft Fabric](https://img.shields.io/badge/Microsoft-Fabric-blue)
+![Azure SQL](https://img.shields.io/badge/Azure-SQL%20Database-0078D4)
+![Delta Lake](https://img.shields.io/badge/Storage-Delta%20Lake-008080)
+![Status](https://img.shields.io/badge/Status-Validated-success)
 
-**Repository readiness issue:** the uncommitted [configuration](config/ingestion_config.json) now contains valid JSON with ten records: five enabled FILE, four enabled SQL and one disabled REST placeholder. It was updated externally during this review; this documentation task did not edit it. The [validator](tests/validate-config.ps1) still enforces the older SQL `TBD`/disabled contract and fails. Verify catalog parity with Fabric and reconcile the validator before treating the repository as deployment-ready.
+**Project status:** Working ingestion demonstration | **Last validated:** October 8, 2026 | **Architecture:** Configuration → Orchestration → Landing → Bronze
+**Repository:** [fabric-metadata-driven-ingestion](https://github.com/DJ8052/fabric-metadata-driven-ingestion)
 
-## Documentation and repository map
+---
 
-| Resource | Purpose |
-| --- | --- |
-| [Architecture and decisions](docs/architecture.md) | Boundaries, expressions' provenance, tradeoffs and historical artifacts |
-| [Configuration contract](docs/configuration-contract.md) | Field definitions, real record examples, validation and onboarding |
-| [Operations runbook](docs/operations-runbook.md) | Preflight, monitoring, troubleshooting, recovery and security |
-| [Testing and validation](docs/testing-and-validation.md) | Dated evidence, SQL checks, acceptance layers and untested scenarios |
-| [Local configuration](config/ingestion_config.json) | Ten-record local catalog; deployed-file parity not verified |
-| [Validator](tests/validate-config.ps1) | Static legacy contract validation; currently fails |
-| [Historical notebook](notebooks/NB_Load_Bronze.py) | Retained earlier Spark Bronze implementation; inactive in current flow |
-| [Fabric artifacts directory](fabric/) | Placeholder only; reviewed pipeline export still needed |
+## 1. Executive Summary
 
-## Architecture
+This project demonstrates how to build a metadata-driven ingestion framework using Microsoft Fabric.
 
-Solid arrows represent source-data movement. Dotted arrows represent orchestration or configuration. Branch activity names are logical names from supplied context, not verified exact deployed names. Each branch has its own Landing representation inside the same Lakehouse.
+Instead of creating and maintaining a separate ingestion pipeline for every source table or file, the framework uses a centralized JSON configuration to define what should be ingested, where the data originates, and where it should be published.
+
+A reusable Fabric pipeline reads this configuration, iterates through the dataset definitions, routes each dataset to the appropriate ingestion process, and loads the resulting data into Delta tables.
+
+### Validated results
+
+| Metric | Result |
+|---|---:|
+| Supported and tested source types | 2 |
+| Enabled datasets | 9 |
+| Azure SQL tables ingested | 4 |
+| Azure Blob CSV datasets ingested | 5 |
+| Bronze Delta tables created | 9 |
+| Total verified Bronze rows | 632 |
+| Successful full pipeline reruns | Yes |
+| Disabled REST dataset | 1 |
+
+**Engineering outcome:** Nine datasets across two source technologies are processed using one shared metadata-driven orchestration pipeline.
+
+The current implementation supports full-snapshot ingestion. Incremental ingestion, CDC, automated recovery, and enterprise-grade observability remain future enhancements.
+
+---
+
+## 2. Business and Engineering Problem
+
+Enterprise data environments commonly contain information distributed across operational databases, cloud storage, applications, and external services.
+
+Traditional ingestion implementations often create a dedicated pipeline for every dataset.
+
+As the number of datasets increases, this approach introduces several challenges:
+
+- Repeated pipeline development and maintenance
+- Inconsistent source-to-target naming conventions
+- Duplicated orchestration logic
+- More complex troubleshooting
+- Increased effort when onboarding new datasets
+- Limited standardization across source systems
+
+### Architectural approach
+
+Separate **dataset configuration** from **pipeline execution logic**.
+
+The configuration defines the source and destination. The pipeline supplies reusable ingestion behavior.
+
+This creates a foundation for extending ingestion without duplicating the entire orchestration workflow.
+
+---
+
+## 3. Solution Architecture
 
 ```mermaid
-flowchart TB
-  blob["Azure Blob Storage: ecommerce CSV"]
-  sql["Azure SQL Database: adflookupdemo"]
-  cfg["LH_Configuration: Files/ingestion_config.json"]
-  subgraph pipeline["PL_Metadata_Ingestion"]
-    ts["set_run_timestamp"]
-    lookup["lkp_ingestion_config"]
-    loop["fe_dataset_loop"]
-    route{"sw_ingestion_route"}
-    f1["FILE: cpy_file_to_landing"]
-    f2["cpy_landing_to_bronze"]
-    s1["SQL: cpy_azuresql_to_landing"]
-    s2["cpy_sql_landing_to_bronze"]
-    skip["DISABLED: lightweight Wait"]
-    ts -.-> lookup
-    lookup -.-> loop
-    loop -.-> route
-    route -.-> f1
-    route -.-> s1
-    route -.-> skip
-    f1 -.-> f2
-    s1 -.-> s2
-  end
-  subgraph landing["LH_Landing: Files / RunId-specific folders"]
-    csv["FILE extracts: original CSV"]
-    pq["SQL extracts: Parquet"]
-  end
-  subgraph bronze["LH_Bronze: current Delta tables"]
-    ec["ecommerce: 5 tables"]
-    az["adflookupdemo: 4 tables"]
-  end
-  cfg -.-> lookup
-  blob --> f1
-  f1 --> csv
-  csv --> f2
-  f2 --> ec
-  sql --> s1
-  s1 --> pq
-  pq --> s2
-  s2 --> az
+flowchart LR
+    subgraph CONTROL["CONFIGURATION AND CONTROL FLOW"]
+        JSON["LH_Configuration<br/>ingestion_config.json<br/>10 dataset records"]
+        START["PL_Metadata_Ingestion"]
+        LOOKUP["Lookup"]
+        LOOP["ForEach<br/>per dataset"]
+        SWITCH{"Switch<br/>FILE / SQL / DISABLED"}
+        SKIP["Disabled dataset<br/>no source ingestion"]
+
+        START -.-> LOOKUP
+        LOOKUP -.-> LOOP
+        LOOP -.-> SWITCH
+        SWITCH -. FILE .-> FILE_COPY_1
+        SWITCH -. SQL .-> SQL_COPY_1
+        SWITCH -. DISABLED .-> SKIP
+        JSON -. configuration .-> LOOKUP
+    end
+
+    subgraph DATA["DATA MOVEMENT"]
+        BLOB["Azure Blob Storage<br/>5 CSV sources"]
+        SQL["Azure SQL Database<br/>adflookupdemo<br/>4 tables"]
+        FILE_COPY_1["Copy source CSV<br/>to Landing"]
+        CSV["LH_Landing<br/>run-specific CSV"]
+        FILE_COPY_2["Copy Landing CSV<br/>to Bronze"]
+        SQL_COPY_1["Copy SQL table<br/>to Landing"]
+        PARQUET["LH_Landing<br/>run-specific Parquet"]
+        SQL_COPY_2["Copy Landing Parquet<br/>to Bronze"]
+        ECOM["LH_Bronze<br/>ecommerce schema<br/>5 tables / 75 rows"]
+        AZSQL["LH_Bronze<br/>adflookupdemo schema<br/>4 tables / 557 rows"]
+
+        BLOB --> FILE_COPY_1
+        FILE_COPY_1 --> CSV
+        CSV --> FILE_COPY_2
+        FILE_COPY_2 --> ECOM
+        SQL --> SQL_COPY_1
+        SQL_COPY_1 --> PARQUET
+        PARQUET --> SQL_COPY_2
+        SQL_COPY_2 --> AZSQL
+    end
+
+    classDef source fill:#E8F2FF,stroke:#3976B8,color:#18395B
+    classDef config fill:#FFF2D9,stroke:#D69A30,color:#60410A
+    classDef output fill:#E3F4EA,stroke:#37915E,color:#174D30
+
+    class BLOB,SQL source
+    class JSON config
+    class CSV,PARQUET,ECOM,AZSQL output
 ```
 
-The SQL branch does not pass through FILE activities. Configuration controls processing and does not carry source records. DISABLED performs no ingestion according to the supplied architecture; its exact expression and dedicated test result are unverified.
+**Diagram interpretation**
 
-## End-to-end execution
+- Dotted arrows: Configuration input and orchestration/routing
+- Solid arrows: Source data movement through Copy activities, Landing, and Bronze
+- Landing: Run-specific source extracts
+- Bronze: Current queryable Delta snapshots
 
-1. `set_run_timestamp` initializes run context. Earlier documentation records String `run_timestamp = @utcNow()`; its current setting and consumers need UI verification. The separate `@pipeline().RunId` identifies the execution and Landing run folder.
-2. `lkp_ingestion_config` reads `Files/ingestion_config.json` from `LH_Configuration`. Inspect its actual output before assuming a `firstRow` or `value` shape.
-3. `fe_dataset_loop` receives dataset records from Lookup and processes each record. The exact Items expression and sequential/parallel settings are **Requires Fabric UI verification**.
-4. `sw_ingestion_route` selects FILE, SQL or DISABLED according to supplied context. The catalog has Boolean `enabled` and `source_type`, but exact expression precedence, case handling and unknown-type behavior cannot be established without the definition. Do not infer them from activity names.
-5. FILE copies a Blob file to Landing, then parses Landing CSV into Bronze. Earlier docs record Binary copy using `source.container` and `source.path`, then CSV with headers, comma delimiter and UTF-8. Both copies used directory `@concat(item().source_system,'/',item().dataset_id,'/',pipeline().RunId)` under Files and filename `@item().source.path`. These are historical documented bindings awaiting current UI confirmation.
-6. SQL selects source schema/table described in `source`, writes Parquet to Landing, then loads Bronze. The owner confirms this path. Actual schema/table expressions, connection/database binding, Landing directory and filename construction are **Requires Fabric UI verification**. SQL records have no `source.path`; do not assume FILE naming logic applies.
-7. Bronze destinations are identified by `bronze.schema` and `bronze.table`. Earlier FILE settings use `@item().bronze.schema` / `@item().bronze.table`; SQL target results are verified by the owner, while exact expressions remain unverified. Overwrite publishes the current full snapshot for each table. This does not create a transaction spanning all datasets.
-8. A disabled dataset takes a lightweight Wait according to supplied context. Older `if_dataset_enabled` and test activities are not presented as active. Actual Copy names may include `_copy1`/`_copy2`.
+The FILE and SQL branches are separate ingestion paths. Both publish to the same Bronze Lakehouse. The diagram separates control routing from data movement; it does not assert unverified activity dependency settings.
 
-### Trace: dbo.Cars
+---
 
-The local `azuresql_cars` record specifies `source_system: adflookupdemo`, type SQL, alias `azuresql_adflookupdemo`, source `adflookupdemo.dbo.Cars`, Landing `PARQUET`, and Bronze `adflookupdemo.cars`. The supplied source server is `devonadfsqldemo.database.windows.net`. The SQL branch reads the table through a Fabric connection, lands Parquet in `LH_Landing`, then overwrites the target in `LH_Bronze`; 428 rows were verified.
+## 4. Technology Stack
 
-The shared path convention would place this dataset under `Files/adflookupdemo/azuresql_cars/<pipeline-run-id>/`; the exact deployed SQL directory and filename are **Not verified**. Obtain them from Copy's evaluated input/output rather than inventing a filename. The alias is descriptive; automatic connection selection is not evidenced.
+| Technology | Responsibility |
+|---|---|
+| Microsoft Fabric | Unified analytics and data engineering platform |
+| Fabric Data Factory | Pipeline orchestration and Copy activities |
+| Fabric Lakehouse | Configuration, Landing, and Bronze storage |
+| Azure Blob Storage | File-based source system |
+| Azure SQL Database | Relational source system |
+| JSON | Centralized dataset metadata |
+| Parquet | Intermediate Landing format for SQL extracts |
+| Delta Lake | Queryable Bronze tables |
+| SQL Analytics Endpoint | Bronze validation and querying |
+| Git / GitHub | Version control and engineering documentation |
 
-### Trace: ecommerce customers
+### Why Copy activities?
 
-The current local `ecommerce_customers` record identifies `source/customers.csv`, source system `ecommerce`, alias `blob_ecommerce`, and Bronze `ecommerce.customers`. Earlier docs identify Blob account `ecommerceunifiedproject`. The documented FILE path is `LH_Landing/Files/ecommerce/ecommerce_customers/<pipeline-run-id>/customers.csv`, followed by CSV-to-Delta Overwrite. The owner verified 15 Bronze rows on October 8. Compare this local record with the deployed catalog before reuse.
+The current workloads primarily require reliable data movement rather than complex distributed transformations.
 
-## Fabric component inventory
+Fabric Copy activities are sufficient for the demonstrated source-to-Landing and Landing-to-Bronze processes.
 
-| Component | Responsibility and interaction |
-| --- | --- |
-| `WS_Metadata_Bronze_Demo` | Workspace hosting the pipeline and three Lakehouses |
-| `LH_Configuration` | Holds JSON read by Lookup; does not stage source data |
-| `LH_Landing` | Stores source extracts in run-specific folders: FILE CSV, SQL Parquet |
-| `LH_Bronze` | Hosts current queryable Delta snapshots grouped by source system |
-| `PL_Metadata_Ingestion` | Coordinates dataset processing and per-source branches |
-| `set_run_timestamp` | Initializes timestamp context; distinct from RunId |
-| `lkp_ingestion_config` | Retrieves metadata for iteration |
-| `fe_dataset_loop` | Iterates records; exact parallelism unverified |
-| `sw_ingestion_route` | Routes FILE/SQL/DISABLED; exact expression/default unverified |
-| `cpy_file_to_landing` | Blob-to-Landing copy, logical name |
-| `cpy_landing_to_bronze` | Landing CSV-to-Bronze copy, logical name |
-| `cpy_azuresql_to_landing` | Azure SQL-to-Parquet copy, logical name |
-| `cpy_sql_landing_to_bronze` | Landing Parquet-to-Bronze copy, logical name |
-| DISABLED Wait | Lightweight skip path; deployed name/duration unverified |
-| Fabric connections | External authentication and resource bindings; alias resolution unverified |
-| Bronze SQL analytics endpoint | Read/query interface used for owner-reported validation |
+Apache Spark is not required merely because the destination is a Lakehouse.
 
-## Metadata contract and onboarding
+Spark notebooks may become appropriate when the workload requires more complex transformations, specialized parsing, or distributed processing.
 
-The intended v1 root contains `contract_version`, `landing_path_template` and `datasets`. Each record contains `dataset_id`, Boolean `enabled`, `source_system`, `source_type`, `connection_alias`, `source`, `landing`, `bronze`, `keys` and `load_policy`. See the [complete contract and representative SQL/FILE records](docs/configuration-contract.md).
+---
 
-Identity, source and Bronze fields describe selection and naming. `connection_alias` is a logical label, not a proven dynamic Fabric connection switch. `keys` are reserved/descriptive, not implemented merge logic. `FULL` means the selected object's complete snapshot; `REPLACE_SNAPSHOT` describes replacement of Bronze contents; `NONE` means no business change-history policy. Runtime enforcement of these policy strings and dynamic consumption of the path-template property are **Not verified**.
+## 5. Microsoft Fabric Resources
 
-For another table in the existing Azure SQL database, verify permissions/types and copy a supported SQL record with unique identity and target. Check schema/table expressions, Parquet naming and the connection database; then perform an acceptance test. For another Blob CSV, verify container/path, parsing compatibility and target uniqueness, then test both FILE copies. Neither configuration-only onboarding nor arbitrary file formats have been proven.
+### Workspace
 
-A new connection requires provisioning, source-specific authentication, permissions/networking and reviewed pipeline bindings. A new source type additionally requires branch/loader/validation changes. Resolve the current repository catalog/validator mismatch before using local checks as a deployment gate.
+`WS_Metadata_Bronze_Demo`
 
-## Load semantics and data lifecycle
+### Lakehouses
 
-Each successful extract replaces its table's current Bronze snapshot. If source rows grow, a correct subsequent full load should increase Bronze accordingly; if rows disappear, replacement should remove them from the current snapshot. These growth/deletion scenarios are expected semantics, not completed tests. A rerun with unchanged tested inputs produced the same counts, but counts alone do not prove identical values or safe behavior during every failure.
+| Lakehouse | Purpose |
+|---|---|
+| `LH_Configuration` | Stores the centralized ingestion metadata |
+| `LH_Landing` | Stores source extracts in execution-specific folders |
+| `LH_Bronze` | Stores current Delta snapshots for querying and downstream processing |
 
-The empty ServiceRequests source produced a queryable zero-row table. Replacing a previously nonempty table with an empty extract has not been separately tested. An extraction error must not be treated as a legitimate empty source.
+### Pipeline
 
-Run-scoped Landing preserves historical input separately from current Bronze. Retention duration, immutability enforcement, completion markers and automated cleanup are not established. A failed run can leave incomplete extracts and mixed-age Bronze tables. No cross-table atomicity, general exactly-once guarantee or safe automated replay is demonstrated. Microsoft's [Lakehouse Copy reference](https://learn.microsoft.com/en-us/fabric/data-factory/connector-lakehouse-copy-activity) defines Overwrite as replacing data and schema; project schema-drift handling remains untested.
+`PL_Metadata_Ingestion`
 
-## Testing and validation
+### Active orchestration components
 
-These are **owner-verified October 8, 2026 results**, not queries rerun by this review.
+| Activity | Responsibility |
+|---|---|
+| `lkp_ingestion_config` | Reads the JSON configuration |
+| `fe_dataset_loop` | Iterates through individual dataset records |
+| `sw_ingestion_route` | Routes datasets by enabled status and source type |
+| FILE Copy activities | Move CSV data through Landing into Bronze |
+| SQL Copy activities | Move relational data through Parquet Landing into Bronze |
+| DISABLED case | Routes disabled datasets away from FILE and SQL ingestion |
 
-| Source table/file | Bronze table | Rows |
-| --- | --- | ---: |
+The active Switch replaced an earlier If Condition design.
+
+The deployed Copy activity names may include generated suffixes such as `_copy1` and `_copy2`. Inspect the Fabric pipeline for exact activity identifiers.
+
+Earlier repository documentation mentions a `set_run_timestamp` variable; whether it remains active or is consumed by the current deployment has not been independently verified.
+
+---
+
+## 6. Metadata-Driven Orchestration
+
+The configuration file is stored at:
+
+`LH_Configuration/Files/ingestion_config.json`
+
+The root JSON structure contains:
+
+```json
+{
+  "contract_version": 1,
+  "landing_path_template": "Files/{source_system}/{dataset_id}/{run_id}/",
+  "datasets": []
+}
+```
+
+The `datasets` array contains the individual ingestion definitions.
+
+### 6.1 Lookup activity
+
+Activity:
+
+`lkp_ingestion_config`
+
+The Lookup reads the JSON configuration from the Configuration Lakehouse.
+
+For the current working implementation, the Lookup output contains the root configuration object within the `value` array.
+
+### 6.2 ForEach activity
+
+Activity:
+
+`fe_dataset_loop`
+
+**Verified working Items expression:**
+
+```text
+@activity('lkp_ingestion_config').output.value[0].datasets
+```
+
+This expression is essential.
+
+The Lookup returns a wrapper object containing:
+
+- `contract_version`
+- `landing_path_template`
+- `datasets`
+
+The ForEach must iterate over the nested `datasets` array, not the entire wrapper object.
+
+**Development lesson:** Iterating directly over `output.value` caused the Switch to receive the root configuration object. The pipeline failed because `item().enabled` did not exist at that level.
+
+Correcting the ForEach Items expression resolved the error, and the subsequent pipeline run completed successfully.
+
+### 6.3 Switch routing
+
+Activity:
+
+`sw_ingestion_route`
+
+**Verified working Switch expression:**
+
+```text
+@if(equals(item().enabled, false), 'DISABLED', item().source_type)
+```
+
+Routing behavior:
+
+| Condition | Route |
+|---|---|
+| `enabled = false` | DISABLED |
+| `enabled = true`, `source_type = FILE` | FILE |
+| `enabled = true`, `source_type = SQL` | SQL |
+
+This ensures disabled datasets are not routed to their normal ingestion branches.
+
+The current Switch implements FILE, SQL, and DISABLED cases. Other source types are not supported ingestion routes.
+
+---
+
+## 7. Configuration Contract
+
+Each dataset record follows a common metadata structure.
+
+| Property | Purpose |
+|---|---|
+| `dataset_id` | Unique dataset identifier |
+| `enabled` | Controls whether ingestion should execute |
+| `source_system` | Logical source-system grouping |
+| `source_type` | Determines ingestion routing |
+| `connection_alias` | Logical connection identifier |
+| `source` | Source-specific database, table, or file properties |
+| `landing` | Landing representation |
+| `bronze` | Target schema and table |
+| `keys` | Reserved source/business key metadata |
+| `load_policy` | Describes the intended ingestion and history policy |
+
+### Example: Azure SQL Database
+
+```json
+{
+  "dataset_id": "azuresql_cars",
+  "enabled": true,
+  "source_system": "adflookupdemo",
+  "source_type": "SQL",
+  "connection_alias": "azuresql_adflookupdemo",
+  "source": {
+    "database": "adflookupdemo",
+    "schema": "dbo",
+    "table": "Cars"
+  },
+  "landing": {
+    "format": "PARQUET"
+  },
+  "bronze": {
+    "schema": "adflookupdemo",
+    "table": "cars"
+  },
+  "keys": {
+    "source_primary_key": null,
+    "business_key": null
+  },
+  "load_policy": {
+    "mode": "FULL",
+    "bronze_write": "REPLACE_SNAPSHOT",
+    "history": "NONE"
+  }
+}
+```
+
+### Example: Azure Blob CSV
+
+```json
+{
+  "dataset_id": "ecommerce_customers",
+  "enabled": true,
+  "source_system": "ecommerce",
+  "source_type": "FILE",
+  "connection_alias": "blob_ecommerce",
+  "source": {
+    "container": "source",
+    "path": "customers.csv",
+    "format": "CSV"
+  },
+  "landing": {
+    "format": "CSV"
+  },
+  "bronze": {
+    "schema": "ecommerce",
+    "table": "customers"
+  },
+  "keys": {
+    "source_primary_key": null,
+    "business_key": null
+  },
+  "load_policy": {
+    "mode": "FULL",
+    "bronze_write": "REPLACE_SNAPSHOT",
+    "history": "NONE"
+  }
+}
+```
+
+### Important contract distinctions
+
+`connection_alias` is a logical metadata field. Dynamic switching among arbitrary Fabric connections has not been demonstrated.
+
+`keys` is reserved metadata. The current implementation does not perform key-based MERGE operations.
+
+`landing_path_template` documents the directory convention. Its runtime consumption by the pipeline has not been independently verified.
+
+The load-policy fields describe the current full-snapshot design. They should not be interpreted as proof that the pipeline dynamically supports other load modes.
+
+See [Configuration Contract](docs/configuration-contract.md) for additional details.
+
+---
+
+## 8. Ingestion Paths
+
+### 8.1 FILE ingestion
+
+**Source:** Azure Blob Storage | **Input:** CSV | **Landing:** CSV | **Bronze:** Delta
+
+Execution sequence:
+
+1. Read the FILE dataset definition.
+2. Resolve the configured Blob container and source path.
+3. Copy the source file into `LH_Landing`.
+4. Use a RunId-specific Landing directory.
+5. Read the Landing CSV.
+6. Write the corresponding Delta table in `LH_Bronze`.
+
+Example dataset:
+
+`ecommerce_customers`
+
+Source:
+
+`source/customers.csv`
+
+Landing convention:
+
+```text
+LH_Landing/
+  Files/
+    ecommerce/
+      ecommerce_customers/
+        {pipeline_run_id}/
+          customers.csv
+```
+
+This is the documented path convention; inspect the evaluated run path in Fabric before relying on it.
+
+Bronze destination:
+
+`LH_Bronze.ecommerce.customers`
+
+### 8.2 SQL ingestion
+
+**Source:** Azure SQL Database | **Landing:** Parquet | **Bronze:** Delta
+
+Database:
+
+`adflookupdemo`
+
+Execution sequence:
+
+1. Read the SQL dataset definition.
+2. Resolve the source schema and table.
+3. Copy the Azure SQL table into Landing as Parquet.
+4. Use a RunId-specific Landing directory.
+5. Read the Landing Parquet file.
+6. Overwrite the configured Bronze Delta table.
+
+Example dataset:
+
+`azuresql_cars`
+
+Source:
+
+`adflookupdemo.dbo.Cars`
+
+Landing convention:
+
+```text
+LH_Landing/
+  Files/
+    adflookupdemo/
+      azuresql_cars/
+        {pipeline_run_id}/
+          azuresql_cars.parquet
+```
+
+This is an illustrative convention from earlier repository documentation, not an independently verified deployed SQL path or filename. Inspect the evaluated Copy source and sink in Fabric.
+
+Bronze destination:
+
+`LH_Bronze.adflookupdemo.cars`
+
+### Verified dynamic pipeline expressions
+
+The deployed pipeline has been confirmed to use these expressions:
+
+**ForEach Items**
+
+```text
+@activity('lkp_ingestion_config').output.value[0].datasets
+```
+
+**Switch expression**
+
+```text
+@if(equals(item().enabled, false), 'DISABLED', item().source_type)
+```
+
+These route enabled FILE and SQL records to their respective branches and disabled records to DISABLED. Exact expressions for SQL source selection, Landing paths, destination selection, and connection binding have not been independently verified from a pipeline export. `connection_alias` is metadata and is not evidence of dynamic selection among arbitrary Fabric connections.
+
+---
+
+## 9. Landing and Bronze Design
+
+### Landing: Execution-specific source extracts
+
+`LH_Landing` retains source extracts under RunId-specific directories.
+
+Benefits include:
+
+- Separating source extraction from Bronze publication
+- Locating the input associated with a particular execution
+- Supporting troubleshooting and source-data inspection
+- Reducing the risk of overwriting the previous run's Landing files
+
+Run-scoped storage is not, by itself, proof of immutable retention or automated replay.
+
+### Bronze: Current source snapshots
+
+`LH_Bronze` contains Delta tables representing the current successfully published full snapshot for each dataset.
+
+Current write behavior:
+
+`Overwrite`
+
+The intended metadata policy is:
+
+```json
+{
+  "mode": "FULL",
+  "bronze_write": "REPLACE_SNAPSHOT",
+  "history": "NONE"
+}
+```
+
+If the source gains or loses records, a subsequent successful full-snapshot load should reflect that change in Bronze.
+
+The current project has verified reruns with unchanged row counts. Source growth, deletion, and recovery scenarios remain to be tested.
+
+**Important:** Snapshot replacement occurs at the individual table level. The pipeline does not demonstrate an atomic transaction across all nine tables.
+
+---
+
+## 10. Verified Test Results
+
+**Validation date: October 8, 2026**
+
+The full pipeline completed successfully, and the Bronze SQL analytics endpoint was used to verify the resulting tables and row counts.
+
+### Azure SQL Database
+
+| Source | Bronze table | Rows |
+|---|---|---:|
 | `dbo.Cars` | `adflookupdemo.cars` | 428 |
 | `dbo.Countries` | `adflookupdemo.countries` | 17 |
 | `dbo.Movies` | `adflookupdemo.movies` | 112 |
 | `dbo.ServiceRequests` | `adflookupdemo.service_requests` | 0 |
+| **SQL total** | **4 tables** | **557** |
+
+### Azure Blob Storage
+
+| Source file | Bronze table | Rows |
+|---|---|---:|
 | `customers.csv` | `ecommerce.customers` | 15 |
 | `orders.csv` | `ecommerce.orders` | 15 |
 | `payments.csv` | `ecommerce.payments` | 15 |
 | `support_tickets.csv` | `ecommerce.support_tickets` | 15 |
 | `web_activities.csv` | `ecommerce.web_activities` | 15 |
-| **SQL subtotal** | **4 tables** | **557** |
-| **FILE subtotal** | **5 tables** | **75** |
-| **Total** | **9 tables** | **632** |
+| **FILE total** | **5 tables** | **75** |
 
-The initial end-to-end execution and subsequent full execution succeeded with unchanged counts. See [reproducible SQL for all nine tables](docs/testing-and-validation.md), including evidence limitations. For example, execute `SELECT COUNT_BIG(*) FROM [adflookupdemo].[cars];` against the **LH_Bronze SQL analytics endpoint**. Original query text was not supplied; documented queries reproduce the checks.
+### Combined results
 
-Validation layers answer different questions: editor validation checks structural configuration; activity success shows execution; Copy metrics show available rows/files read/written; Landing inspection confirms the actual extract; Bronze existence distinguishes missing from empty; per-table counts check snapshot size; end-to-end acceptance combines all of these with source reconciliation. A total of 632 alone could hide compensating errors across tables.
+**9 Bronze Delta tables | 632 rows | 2 tested source types**
 
-Local check:
+A subsequent successful execution using the updated nested JSON configuration produced the same Bronze row counts.
 
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File tests/validate-config.ps1
+### Empty-table handling
+
+The Azure SQL `ServiceRequests` source contained zero records.
+
+The ingestion completed successfully and produced a queryable Bronze table containing zero rows.
+
+This verifies handling of an initially empty source table. It does not establish behavior when an existing nonempty Bronze table is replaced by an empty extract.
+
+---
+
+## 11. SQL Validation Queries
+
+Run the following queries against the `LH_Bronze` SQL analytics endpoint.
+
+```sql
+-- Azure SQL source datasets
+
+SELECT 'Cars' AS dataset_name, COUNT_BIG(*) AS row_count
+FROM [adflookupdemo].[cars]
+
+UNION ALL
+
+SELECT 'Countries', COUNT_BIG(*)
+FROM [adflookupdemo].[countries]
+
+UNION ALL
+
+SELECT 'Movies', COUNT_BIG(*)
+FROM [adflookupdemo].[movies]
+
+UNION ALL
+
+SELECT 'ServiceRequests', COUNT_BIG(*)
+FROM [adflookupdemo].[service_requests];
 ```
 
-JSON syntax now passes. The validator fails on its obsolete SQL Landing `TBD` requirement and also contains a SQL-disabled rule. Do not interpret that repository failure as a failed deployed Fabric execution, or change tests just to make documentation pass.
+```sql
+-- Azure Blob ecommerce datasets
 
-## Operations and troubleshooting
+SELECT 'Customers' AS dataset_name, COUNT_BIG(*) AS row_count
+FROM [ecommerce].[customers]
 
-Open Monitor or pipeline **Run > View run history**, select a run, then drill into ForEach/Switch and Copy details. Record RunId, affected dataset from evaluated inputs, status, errors and available Copy metrics. See [Microsoft's monitoring instructions](https://learn.microsoft.com/en-us/fabric/data-factory/monitor-copy-activity) and the [project runbook](docs/operations-runbook.md).
+UNION ALL
 
-For `PathNotFound`, compare both copies' Lakehouse, Files root, dataset/RunId directory, case, filename and format; confirm the producer actually completed. This is a troubleshooting example, not an asserted historical incident. For missing tables, check branch execution, the evaluated Bronze destination, second-copy errors, permissions and SQL endpoint visibility separately from Lakehouse Tables. For connectivity, verify the actual Fabric connection and source authentication/network access. For unexpected counts, reconcile against the source/extract at the relevant capture time and inspect skips or mapping failures.
+SELECT 'Orders', COUNT_BIG(*)
+FROM [ecommerce].[orders]
 
-The confirmed development/repository issues are stale FILE-only documentation and a legacy validator; initially incomplete local JSON was corrected externally during review. No custom audit store or reconciliation table is implemented. Before retrying a partial run, identify changed tables and incomplete extracts; a fresh run can read newer source data and is not automatic replay of the old snapshot.
+UNION ALL
 
-## Security considerations
+SELECT 'Payments', COUNT_BIG(*)
+FROM [ecommerce].[payments]
 
-Keep connection credentials in approved Fabric connection mechanisms, never in JSON/Git. Actual authentication modes are **Not verified**; verify them per source. Review source read permissions, connection sharing, workspace roles, OneLake/Lakehouse and SQL endpoint access. Landing contains raw source data and is not automatically a security boundary merely because it is a separate Lakehouse.
+UNION ALL
 
-Apply least privilege and appropriate sensitive-data retention/access controls to both Landing and Bronze. Sanitize operational errors/screenshots; do not record tokens, SAS URLs, raw sensitive records or credential-bearing connection strings. Logical source names are not secrets or deployable connection IDs.
+SELECT 'SupportTickets', COUNT_BIG(*)
+FROM [ecommerce].[support_tickets]
 
-## Design decisions and tradeoffs
+UNION ALL
 
-JSON makes metadata reviewable; Lookup/ForEach/Switch reuse orchestration while preserving source-specific behavior. Native Copy suits movement without custom transformations; earlier docs record replacing Spark because its startup overhead was disproportionate for small CSVs. SQL Parquet provides a typed intermediate format; RunId folders preserve execution-specific inputs; Delta exposes queryable snapshots. Full overwrite avoids watermark/CDC state at the cost of full reads and writes. A separate configuration Lakehouse separates lifecycle and permission management, but adds another binding.
+SELECT 'WebActivities', COUNT_BIG(*)
+FROM [ecommerce].[web_activities];
+```
 
-These are architectural assessments except where historical rationale is explicitly attributed. See the [compact decision log](docs/architecture.md). The retained notebook's schema guards and operational columns are not guarantees of the active Copy paths.
+### Validation checklist
 
-## Limitations and roadmap
+- Pipeline execution succeeded
+- Expected dataset iterations executed
+- Source-specific routing completed
+- Landing files were created
+- Bronze tables were available for querying
+- Individual Bronze row counts matched the observed expectations
+- Full rerun completed with unchanged counts
 
-| Status | Scope |
-| --- | --- |
-| Implemented and owner-verified | CSV/SQL ingestion, SQL Parquet Landing, nine Bronze tables, queryable empty SQL target, full rerun with stable counts |
-| Implemented but not fully tested | DISABLED route; overwrite under changed inputs; broader data types and mappings |
-| Not implemented | Incremental/CDC, REST loader, durable dataset audit/reconciliation, automated safe replay, managed schema evolution |
-| Potential future enhancements | Configuration-only onboarding, growth/deletion and failure tests, data-quality checks, observability and retention controls |
+Row-count validation is necessary but does not establish full record-level equality or source-to-target reconciliation under all conditions.
 
-Prioritize: (1) capture the deployed catalog/export and reconcile local config/validator; (2) retain reproducible run evidence and prove same-connection onboarding plus row growth/deletion/empty transitions; (3) test partial failures, retries, replay order, concurrency and schema/type changes; (4) add reconciliation/observability and lifecycle controls; (5) evaluate incremental/CDC or REST only against a real requirement. No roadmap item is marked complete by this review.
+See [Testing and Validation](docs/testing-and-validation.md).
 
-## Returning to This Project After Six Months
+---
 
-1. Open `DJ8052/fabric-metadata-driven-ingestion` and this README. Inspect `git status` before editing; the October review preserved user changes, including the externally updated ten-record catalog.
-2. Open Fabric workspace `WS_Metadata_Bronze_Demo`, inspect `PL_Metadata_Ingestion`, then `LH_Configuration`, `LH_Landing` and `LH_Bronze`. Confirm connections, permissions and current activity names rather than relying on old screenshots.
-3. Read the contract, architecture/decisions, runbook and test matrix linked above. Treat the notebook as historical and check whether `fabric/` now contains a reviewed export.
-4. Trace Cars or ecommerce customers from the deployed record through the selected connection, evaluated first-copy output, RunId Landing file, second-copy input and Bronze schema/table. Capture the missing SQL filename expression.
-5. Validate configuration and pipeline, run a reviewed snapshot, inspect each expected iteration and Landing extract, then execute the nine-table SQL checks. Use current source expectations, not immutable assumptions about October's counts.
-6. Before modifying metadata, check catalog synchronization, validator compatibility, unique identities/targets, supported formats, authentication and overwrite scope. An alias edit alone does not onboard a connection.
-7. Review the prioritized gaps above. Repository reproducibility and failure testing remain unfinished; a successful demo is not a production recovery guarantee.
+## 12. Operating the Pipeline
+
+### Execute
+
+1. Open Microsoft Fabric.
+2. Navigate to `WS_Metadata_Bronze_Demo`.
+3. Open `PL_Metadata_Ingestion`.
+4. Validate the pipeline.
+5. Select **Run**.
+6. Open the pipeline execution details.
+7. Inspect the ForEach iterations and Switch branches.
+8. Verify the Copy activity results.
+9. Query the Bronze SQL analytics endpoint.
+
+### Troubleshoot a failed execution
+
+Start with the first failed activity, not merely the outer ForEach error.
+
+| Symptom | Investigation |
+|---|---|
+| Missing `enabled` property | Check ForEach Items expression and Lookup output shape |
+| Wrong Switch branch | Check `enabled`, `source_type`, and Switch expression |
+| Azure SQL connection failure | Check Fabric connection, source availability, authentication, and network access |
+| Landing file missing | Check RunId, dataset path, filename, and first Copy execution |
+| Bronze table missing | Check second Copy activity, destination schema/table, and SQL endpoint visibility |
+| Unexpected row count | Compare source records, Copy metrics, Landing extract, and Bronze table |
+| JSON parsing error | Validate JSON syntax and root structure |
+
+### Confirmed development issue: Lookup wrapper
+
+The pipeline failed when ForEach passed the entire JSON wrapper object to the Switch.
+
+The error identified available properties:
+
+```text
+contract_version
+landing_path_template
+datasets
+```
+
+The resolution was:
+
+```text
+@activity('lkp_ingestion_config').output.value[0].datasets
+```
+
+After the correction, the pipeline succeeded and the Bronze row counts matched the previous results.
+
+This is an important example of why pipeline expressions must be based on the actual runtime output structure.
+
+See [Operations Runbook](docs/operations-runbook.md).
+
+---
+
+## 13. Adding New Datasets
+
+The intended onboarding workflow is:
+
+1. Identify the source system and dataset.
+2. Confirm the source connection and permissions.
+3. Confirm that the source type is supported.
+4. Add a unique dataset definition to the JSON configuration.
+5. Specify source and Bronze properties.
+6. Validate the configuration.
+7. Execute the pipeline.
+8. Inspect the correct routing branch.
+9. Verify Landing and Bronze outputs.
+10. Reconcile source and destination records.
+
+### Supported onboarding scenarios
+
+Adding another table to the existing Azure SQL connection is a candidate for configuration-only onboarding, provided the table is compatible with the current Copy activities and permissions.
+
+Adding another compatible CSV file to the existing Blob source follows the same principle.
+
+**A configuration-only onboarding acceptance test has not yet been performed.**
+
+Introducing a new source connection may require connection provisioning and pipeline changes.
+
+Introducing a new source type requires a supported ingestion branch.
+
+---
+
+## 14. Engineering Decisions
+
+| Decision | Rationale and tradeoff |
+|---|---|
+| Central JSON configuration | Keeps dataset definitions separate from pipeline logic |
+| Lookup + ForEach | Reuses orchestration across dataset records |
+| Switch routing | Separates source-specific ingestion behavior |
+| Three Lakehouses | Separates configuration, raw Landing extracts, and Bronze publication |
+| Parquet for SQL Landing | Provides a structured intermediate representation |
+| CSV preservation for FILE Landing | Retains the original file representation |
+| RunId-based directories | Associates Landing extracts with individual executions |
+| Delta in Bronze | Supports queryable Lakehouse tables |
+| Full-snapshot overwrite | Simpler initial implementation, but requires full extraction and replacement |
+| No Spark in active ingestion | Avoids unnecessary custom processing for straightforward data movement |
+
+These choices are appropriate for the demonstrated project scope, not universal prescriptions for every enterprise workload.
+
+For deeper architectural context, see [Architecture and Decisions](docs/architecture.md).
+
+---
+
+## 15. Security and Governance
+
+The metadata file should never contain passwords, tokens, or connection secrets.
+
+Source authentication is configured through Fabric connections rather than credentials embedded in the repository. The deployed authentication modes and connection bindings have not been independently inspected.
+
+Production considerations include:
+
+- Least-privilege source access
+- Appropriate Fabric workspace and Lakehouse permissions
+- Sensitive-data classification
+- Access control for Landing and Bronze
+- Retention policies for run-specific Landing files
+- Credential rotation and connection ownership
+- Auditability and operational logging
+
+A separate Landing Lakehouse does not automatically provide a security boundary or guarantee that sensitive information has been excluded.
+
+---
+
+## 16. Current Limitations and Roadmap
+
+| Capability | Status |
+|---|---|
+| Metadata-driven FILE ingestion | Implemented and tested |
+| Metadata-driven Azure SQL ingestion | Implemented and tested |
+| Run-specific Landing folders | Implemented |
+| Full-snapshot Bronze overwrite | Implemented and tested with stable inputs |
+| Disabled-dataset routing | Implemented; separate acceptance evidence limited |
+| Empty SQL source ingestion | Tested |
+| Configuration-only dataset onboarding | Not yet tested |
+| Source row growth/deletion handling | Not yet tested |
+| Incremental ingestion / CDC | Not implemented |
+| REST ingestion | Not implemented |
+| Automated data reconciliation | Not implemented |
+| Failure injection and recovery testing | Not completed |
+| Automated schema-drift management | Not implemented |
+| Durable operational audit framework | Not implemented |
+
+### Recommended next engineering milestones
+
+**Phase 1 — Extensibility testing**
+
+Add another Azure SQL table through configuration alone, without changing the pipeline. Verify source-to-target results.
+
+**Phase 2 — Snapshot correctness**
+
+Add and remove source records. Verify Bronze reflects the new source snapshot after a successful rerun.
+
+**Phase 3 — Failure and recovery**
+
+Test connection failures, missing files, partial execution, retries, and replay behavior.
+
+**Phase 4 — Operational controls**
+
+Introduce dataset-level execution logging, source-to-target reconciliation, error classification, and retention policies.
+
+**Phase 5 — Additional ingestion patterns**
+
+Evaluate incremental ingestion, CDC, and REST integration based on actual requirements.
+
+---
+
+## 17. Repository Navigation
+
+| Resource | Description |
+|---|---|
+| [Configuration JSON](config/ingestion_config.json) | Dataset definitions and ingestion metadata |
+| [Architecture](docs/architecture.md) | Architecture and engineering decisions |
+| [Configuration Contract](docs/configuration-contract.md) | Metadata field definitions and usage |
+| [Operations Runbook](docs/operations-runbook.md) | Execution, troubleshooting, and recovery guidance |
+| [Testing and Validation](docs/testing-and-validation.md) | Validation results and outstanding tests |
+| [Configuration Validator](tests/validate-config.ps1) | Local configuration checks |
+| [Notebooks](notebooks/) | Historical or supporting notebook artifacts |
+| [Fabric Artifacts](fabric/) | Fabric-related repository artifacts |
+
+### Repository validation note
+
+The local validator checks the current v1 JSON structure, FILE and SQL metadata, Bronze destinations, enabled flags, and full-snapshot load-policy values. The disabled REST record is checked as metadata only; the validator does not imply REST support. Run `powershell -NoProfile -ExecutionPolicy Bypass -File tests\validate-config.ps1` from the repository root. A local validation pass does not inspect the deployed Fabric catalog or prove pipeline execution.
+
+---
+
+## 18. Returning to This Project After Six Months
+
+Use this section to reconstruct the working environment.
+
+### Step 1 — Review the architecture
+
+Start with this README and the Mermaid diagram.
+
+Understand the separation between:
+
+- Configuration
+- Orchestration
+- Landing
+- Bronze
+
+### Step 2 — Open the Fabric workspace
+
+Workspace:
+
+`WS_Metadata_Bronze_Demo`
+
+Locate:
+
+```text
+PL_Metadata_Ingestion
+LH_Configuration
+LH_Landing
+LH_Bronze
+```
+
+### Step 3 — Inspect the configuration
+
+Open:
+
+`LH_Configuration/Files/ingestion_config.json`
+
+Compare the deployed configuration against:
+
+`config/ingestion_config.json`
+
+Confirm the current enabled datasets, source connections, and Bronze destinations.
+
+### Step 4 — Inspect the pipeline
+
+Review the following sequence:
+
+```text
+lkp_ingestion_config
+    ↓
+fe_dataset_loop
+    ↓
+sw_ingestion_route
+    ├── FILE
+    ├── SQL
+    └── DISABLED
+```
+
+Verify the two critical expressions.
+
+**ForEach Items**
+
+```text
+@activity('lkp_ingestion_config').output.value[0].datasets
+```
+
+**Switch expression**
+
+```text
+@if(equals(item().enabled, false), 'DISABLED', item().source_type)
+```
+
+### Step 5 — Trace one dataset
+
+Use `azuresql_cars`.
+
+Follow the record through:
+
+1. JSON configuration
+2. Lookup output
+3. ForEach iteration
+4. SQL Switch branch
+5. Azure SQL source
+6. Landing Parquet file
+7. Bronze Delta table
+8. SQL validation query
+
+Repeat with `ecommerce_customers` to understand the FILE branch.
+
+### Step 6 — Execute and validate
+
+Run the pipeline, inspect the activity details, and query all nine Bronze tables.
+
+The October 8, 2026 baseline is 632 rows.
+
+Future source data may change, so the original row counts should be treated as historical test evidence rather than permanent expected values.
+
+### Step 7 — Review outstanding work
+
+Before expanding the framework, prioritize:
+
+- Verify deployed connection bindings, Landing paths, and timestamp-variable usage
+- Configuration-only onboarding test
+- Source change and snapshot replacement test
+- Failure/retry testing
+- Operational audit and reconciliation design
+
+---
+
+## 19. Project Summary
+
+This project demonstrates practical Microsoft Fabric data engineering capabilities:
+
+- Metadata-driven ingestion design
+- Multi-source orchestration
+- Dynamic dataset iteration
+- Conditional source routing
+- Azure SQL and Azure Blob integration
+- Landing and Bronze Lakehouse architecture
+- Delta table publication
+- SQL-based validation
+- Troubleshooting using actual pipeline execution results
+- Git-based engineering documentation
+
+**Validated outcome:** Nine source datasets successfully ingested into nine Bronze Delta tables, with 632 verified rows and successful repeat executions.
+
+The implementation establishes a working foundation for a larger metadata-driven ingestion platform while explicitly identifying the capabilities that still require engineering and validation.
+
+---
+
+**Built with Microsoft Fabric, Azure SQL Database, Azure Blob Storage, Delta Lake, and GitHub.**

@@ -84,8 +84,7 @@ foreach ($dataset in $config.datasets) {
         'SQL' {
             Assert-Shape $source @('database', 'schema', 'table') "$id source"
             foreach ($field in @('database', 'schema', 'table')) { Assert-Text $source.$field "$id source.$field" }
-            Assert-Valid ($dataset.landing.format -ceq 'TBD') "$id SQL Landing representation remains TBD until the ingestion pattern is implemented and tested."
-            Assert-Valid (-not $dataset.enabled) "$id SQL must remain disabled while Landing representation is TBD."
+            Assert-Valid ($dataset.landing.format -ceq 'PARQUET') "$id SQL Landing format must be PARQUET."
         }
         'FILE' {
             Assert-Shape $source @('container', 'path', 'format') "$id source"
@@ -96,6 +95,7 @@ foreach ($dataset in $config.datasets) {
             Assert-Valid ($dataset.landing.format -ceq $source.format) "$id FILE Landing must preserve source format."
         }
         'REST' {
+            Assert-Valid (-not $dataset.enabled) "$id REST must remain disabled because REST ingestion is not implemented."
             Assert-Shape $source @('relative_path', 'method', 'response_format', 'query_parameters') "$id source"
             Assert-RelativePath $source.relative_path "$id source.relative_path"
             Assert-Text $source.method "$id source.method"
@@ -104,9 +104,10 @@ foreach ($dataset in $config.datasets) {
             Assert-Valid ($source.response_format -ceq 'GEOJSON') "$id REST response must be GEOJSON."
             Assert-Valid ($dataset.landing.format -ceq $source.response_format) "$id REST Landing must preserve response format."
             Assert-Valid ($null -eq $source.query_parameters) "$id REST query-parameter contract is deferred in v1."
-            Assert-Valid (-not $dataset.enabled) "$id REST must remain disabled until request scope is designed."
         }
     }
 }
 
-Write-Output "PASS: JSON syntax; contract v1; $($config.datasets.Count) datasets; unique IDs and Bronze targets; boolean enabled; controlled values; source-specific required fields; format consistency; key definitions; no extra fields."
+$enabledCount = @($config.datasets | Where-Object { $_.enabled }).Count
+$disabledCount = $config.datasets.Count - $enabledCount
+Write-Output "PASS: JSON syntax; contract v1; $($config.datasets.Count) datasets ($enabledCount enabled, $disabledCount disabled); unique IDs and Bronze targets; boolean enabled; FILE/SQL metadata; disabled-only REST metadata; Bronze destinations; full-snapshot load policy; key definitions; no extra fields."

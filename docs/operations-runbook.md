@@ -5,8 +5,8 @@ This runbook targets `WS_Metadata_Bronze_Demo` / `PL_Metadata_Ingestion`. Execut
 ## Before running
 
 1. Open the workspace and inspect `LH_Configuration`, `LH_Landing`, and `LH_Bronze`. Confirm the pipeline's actual connections and Lakehouse bindings, including permission to read sources and write destinations.
-2. Inspect `LH_Configuration/Files/ingestion_config.json`. Compare its complete contents with the intended catalog. The local configuration now parses as ten records, but parity with the deployed catalog is unverified and the legacy validator rejects enabled SQL/Parquet. Resolve that mismatch before relying on the local gate.
-3. Inspect Lookup output and ForEach Items, then the Switch expression, FILE/SQL/DISABLED cases, default behavior, Copy dependencies, and Overwrite destinations. Exact deployed expressions, activity suffixes, and concurrency settings require Fabric UI verification. Do not assume an unknown source type fails safely.
+2. Inspect `LH_Configuration/Files/ingestion_config.json`. Compare its complete contents with the local [catalog](../config/ingestion_config.json); the local catalog has ten records (nine enabled and one disabled), but parity with the deployed catalog is unverified. Run the [local validator](../tests/validate-config.ps1) before using the JSON as an input.
+3. Inspect Lookup output, ForEach Items, the Switch expression, FILE/SQL/DISABLED cases, default behavior, Copy dependencies, and Overwrite destinations. The verified ForEach and Switch expressions are recorded in the [README](../README.md). Wait activity details, activity suffixes, and concurrency settings require Fabric UI verification. Do not assume an unknown source type fails safely.
 4. Check for another active writer to the same Bronze tables. Agree the replacement scope before running; this is a full snapshot, not an incremental load. Record the configuration used without recording secrets.
 5. Validate the pipeline in the editor. Validation is a structural check, not proof of source access or correct results. Run only after configuration and destination review.
 
@@ -22,13 +22,15 @@ For FILE, the previously documented path convention is `LH_Landing/Files/<source
 
 | Symptom | Investigation and next action |
 | --- | --- |
-| Lookup/JSON error | Check the deployed file is a single valid JSON document; inspect its root and returned shape. Initial local fragments were invalid and were corrected externally during review; this was not evidence of a deployed failure. |
+| Lookup/JSON error | Check the deployed file is a single valid JSON document and inspect its returned shape. A confirmed October 8 development error passed the Lookup wrapper object to ForEach; the corrected Items expression selects `@activity('lkp_ingestion_config').output.value[0].datasets`. The run completed after that correction. |
 | Wrong or missing branch | Check Boolean `enabled`, exact source-type casing, ForEach item, Switch expression/cases/default. Disabled behavior and unknown-type behavior need separate tests. |
 | Connection failure | Check the selected Fabric connection, credential validity, source object permissions, firewall/network reachability, and any configured gateway. Do not assume a gateway exists or is required. |
 | `PathNotFound` | Compare evaluated producer sink and consumer source: Lakehouse, Files root, casing, dataset, RunId, directory, filename and extension. Confirm the producer succeeded and created a complete extract. Check whether a retry used another run's path. This is a diagnostic example, not a recorded incident. |
 | Bronze table missing | Check the correct `LH_Bronze` and schema/table, branch execution, second Copy result, mapping and permissions. Check Lakehouse Tables separately from SQL endpoint visibility; [metadata synchronization can lag](https://learn.microsoft.com/en-us/fabric/data-warehouse/sql-analytics-endpoint-performance). Do not rerun blindly. |
 | Unexpected counts | Compare source and extract from the same logical capture time; inspect skipped rows, conversion failures, filters, mappings and the actual destination. Source changes after extraction can invalidate a later count comparison. |
 | Run succeeded but dataset absent | Check disabled/default routes, dataset array completeness and per-iteration output. Pipeline success alone does not prove all expected tables were loaded. |
+
+The working Switch expression is `@if(equals(item().enabled, false), 'DISABLED', item().source_type)`. These expressions are verified facts; the remaining deployed activity settings still require inspection in Fabric.
 
 ## Acceptance and SQL checks
 
